@@ -1,0 +1,14 @@
+2x LM386 op-amps
+2x EL816 optocouplers
+
+2x ALL resistors:
+10kOhm
+33kOhm
+47kOhm
+
+220Ohm (not kilo ohm)
+
+2 amp cards from ardumower.de
+2 coils from ardumower.de
+
+Coils will probably be 3 or 4 in the future.

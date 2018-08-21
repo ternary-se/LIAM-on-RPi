@@ -1,0 +1,60 @@
+#!/usr/bin/python
+# Simple two DC motor robot class usage example.
+# Author: Tony DiCola
+# License: MIT License https://opensource.org/licenses/MIT
+import time
+
+# Import the Robot.py file (must be in the same directory as this file!).
+import Robot
+
+import RPi.GPIO as GPIO
+import atexit
+import sys
+import Adafruit_GPIO.SPI as SPI
+import Adafruit_MCP3008
+
+GPIO.setmode(GPIO.BCM)
+
+def cleanGPIO():
+    GPIO.cleanup()
+atexit.register(cleanGPIO)
+
+# BWF pins and variables
+GPIO.setup(24, GPIO.IN, pull_up_down = GPIO.PUD_UP)
+GPIO.setup(25, GPIO.IN, pull_up_down = GPIO.PUD_UP)
+knappcount = 0
+prev_knappcount = 0
+knappcount2 = 0
+prev_knappcount2 = 0
+prevplacement = "unknown"
+placement_state = "unset"
+prev_input = 1
+prevplacement2 = "unknown"
+placement_state2 = "unset"
+prev_input2 = 1
+
+
+# Hardware SPI configuration:
+SPI_PORT   = 0
+SPI_DEVICE = 0
+mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
+print "Take shelter..."
+
+LEFT_TRIM   = -8
+RIGHT_TRIM  = 0
+
+
+# Create an instance of the robot with the specified trim values.
+# Not shown are other optional parameters:
+#  - addr: The I2C address of the motor HAT, default is 0x60.
+#  - left_id: The ID of the left motor, default is 1.
+#  - right_id: The ID of the right motor, default is 2.
+robot = Robot.Robot(left_trim=LEFT_TRIM, right_trim=RIGHT_TRIM)
+
+i = 0
+obstaclewarning = 0
+obstaclewarningindex = 2
+
+robot.backward(255)
+time.sleep(3)
+robot.stop()

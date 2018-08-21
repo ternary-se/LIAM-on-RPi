@@ -1,0 +1,141 @@
+#!/usr/bin/python
+# Simple two DC motor robot class usage example.
+# Author: Tony DiCola
+# License: MIT License https://opensource.org/licenses/MIT
+import time
+
+# Import the Robot.py file (must be in the same directory as this file!).
+import Robot
+
+import RPi.GPIO as GPIO
+import atexit
+import sys
+import Adafruit_GPIO.SPI as SPI
+import Adafruit_MCP3008
+
+GPIO.setmode(GPIO.BCM)
+
+def cleanGPIO():
+    GPIO.cleanup()
+atexit.register(cleanGPIO)
+
+# BWF pins and variables
+GPIO.setup(24, GPIO.IN, pull_up_down = GPIO.PUD_UP)
+GPIO.setup(25, GPIO.IN, pull_up_down = GPIO.PUD_UP)
+knappcount = 0
+prev_knappcount = 0
+knappcount2 = 0
+prev_knappcount2 = 0
+prevplacement = "unknown"
+placement_state = "unset"
+prev_input = 1
+prevplacement2 = "unknown"
+placement_state2 = "unset"
+prev_input2 = 1
+action = "findBWF"
+status = "findBWF"
+
+
+# Hardware SPI configuration:
+SPI_PORT   = 0
+SPI_DEVICE = 0
+mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
+print "Take shelter..."
+
+LEFT_TRIM   = -8
+RIGHT_TRIM  = 0
+
+
+# Create an instance of the robot with the specified trim values.
+# Not shown are other optional parameters:
+#  - addr: The I2C address of the motor HAT, default is 0x60.
+#  - left_id: The ID of the left motor, default is 1.
+#  - right_id: The ID of the right motor, default is 2.
+robot = Robot.Robot(left_trim=LEFT_TRIM, right_trim=RIGHT_TRIM)
+
+i = 0
+obstaclewarning = 0
+obstaclewarningindex = 2
+
+robot.forward(255)
+
+while True:
+
+  #print i
+
+
+  # a2 is current sensor, a3 is IR receiver
+
+  a2 = mcp.read_adc(2)
+  a3 = mcp.read_adc(3)
+  time.sleep(0.05)
+
+  #print a2
+
+  #diskettladan korde pa 511 eller 512
+  if ((a2 > 480) and ( i>10)):
+    #we are moving and close to something. maybe.
+    print "Current: ",int(a2), " of 1023"
+    print "debug",int(i),int(obstaclewarningindex)
+
+    if (i-1 == obstaclewarningindex):
+      obstaclewarningindex = i
+      obstaclewarning += 1
+      print "consecutive hit",int(i), int(obstaclewarningindex),int(obstaclewarning)
+    else:
+      print "clearing",int(i), int(obstaclewarningindex),int(obstaclewarning)
+      obstaclewarningindex = i
+      obstaclewarning = 0
+
+  i += 1
+
+  if (obstaclewarning == 3):
+    print "I should probably stop now"
+    robot.stop()
+
+  # BWF code
+  start_time = time.time()
+  elapsed_time = time.time() - start_time
+  action_afterBWFcheck = "proceed"
+  while (elapsed_time <= .10):
+    #take a reading
+    input = GPIO.input(24)
+    input2 = GPIO.input(25)
+    #if the last reading was low and this one high, print
+    if ((not prev_input) and input):
+            knappcount += 1
+    if ((not prev_input2) and input2):
+            knappcount2 += 1
+    #update previous input
+    prev_input = input
+    prev_input2 = input2
+    elapsed_time = time.time() - start_time
+  #if (elapsed_time >= .10):
+  print("one up, " + str(knappcount) + " hits")
+  print("two up, " + str(knappcount2) + " hits")
+  
+  if (knappcount >= 18 and knappcount2 >= 18 and action == "findBWF"):
+    print "both coils outside BWF"
+    robot.stop()
+    action = "placeBWFinbetween"
+    time.sleep(0.5)
+    robot.left(100)
+    status = "following"
+  
+  if (knappcount <= 18 and knappcount2 <= 18 and action == "findBWF" and status == "following"):
+    print "both coils inside BWF"
+    robot.stop()
+    action = "placeBWFinbetween"
+    time.sleep(0.5)
+    robot.right(100)
+
+  if (knappcount >= 18 and knappcount2 <= 18 and action == "placeBWFinbetween"):
+    robot.stop()
+    time.sleep(0.3)
+    action = "findBWF"
+    robot.forward(255)
+  
+  knappcount = 0
+  knappcount2 = 0
+
+  # end of BWF code
