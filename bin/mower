@@ -1,0 +1,177 @@
+#!/usr/bin/python3
+import sys,os
+import curses
+import time
+import datetime
+
+import RPi.GPIO as GPIO
+import atexit
+import Adafruit_GPIO.SPI as SPI
+import Adafruit_MCP3008
+from numpy import median
+from collections import deque
+import mowerfunctions
+from random import *
+import syslog
+
+import mowersensors
+
+
+
+def draw_menu(stdscr):
+
+    mbdebug = "debug"
+    LEFT_TRIM   = -8
+    RIGHT_TRIM  = 0
+    robot = mowerfunctions.Robot(left_trim=LEFT_TRIM, right_trim=RIGHT_TRIM)
+
+    sensors = mowersensors.Sensorread()
+
+
+    ##
+
+    k = 0
+    prevk = 0
+    cursor_x = 0
+    cursor_y = 0
+
+    # Clear and refresh the screen for a blank canvas
+    stdscr.clear()
+    stdscr.refresh()
+    stdscr.idcok(False)
+    stdscr.idlok(False)
+
+    # Start colors in curses
+    curses.start_color()
+    curses.init_pair(1, curses.COLOR_CYAN, curses.COLOR_BLACK)
+    curses.init_pair(2, curses.COLOR_RED, curses.COLOR_BLACK)
+    curses.init_pair(3, curses.COLOR_BLACK, curses.COLOR_WHITE)
+
+    curtime = time.time()
+    whstr = "dummy"
+    lapcounter = 0
+    robotstate = "pause"
+
+    stdscr.nodelay(True)
+    syslog.syslog("Liam-on-RPi: entering loop")
+
+    # Loop where k is the last character pressed
+    while (k != ord('q')):
+
+        # A short sleep to lower CPU load and hopefully save some power
+        time.sleep(.1)
+
+        voltage = round(sensors.readvoltage(),2)
+        bwfcount = sensors.readcoils()
+        wheelload = sensors.readmotorcurrent()
+        cutterload = sensors.readcuttercurrent()
+
+        # Initialization
+        #stdscr.clear()
+        height, width = stdscr.getmaxyx()
+
+        cursor_x = max(0, cursor_x)
+        cursor_x = min(width-1, cursor_x)
+
+        cursor_y = max(0, cursor_y)
+        cursor_y = min(height-1, cursor_y)
+
+        # Declaration of strings
+        title = "Curses example"[:width-1]
+        subtitle = "Written by Clay McLeod"[:width-1]
+        keystr = "Last key pressed: {}".format(k)[:width-1]
+        statusbarstr = "Press 'q' to exit | STATUS BAR | Pos: {}, {}".format(cursor_x, cursor_y)
+        if k == 0:
+            keystr = "No key press detected..."[:width-1]
+
+        if (k == ord('m')):
+            rresult = sensors.escapehitrightcoil()
+            k = 0
+            mbdebug = rresult
+            robotstate = "pause"
+
+        if (k == ord('a')) or (robotstate == "recovering") or (robotstate == "running"):
+            sensorcheck = "allok"
+            if (bwfcount[0] > 15):
+                sensorcheck = "escaperight"
+                mbdebug = "escaperight"
+                syslog.syslog("Liam-on-RPi: " + sensorcheck + " BWFleft = " + str(bwfcount[0]) + " (BWFright = " + str(bwfcount[1]) + ")")
+                rresult = sensors.escapehitleftcoil()
+                mbdebug = rresult
+                robotstate = "recovering"
+                bwfcount = sensors.readcoils()
+
+            if (bwfcount[1] > 15):
+                sensorcheck = "escapeleft"
+                mbdebug = "escapeleft"
+                syslog.syslog("Liam-on-RPi: " + sensorcheck + " BWFright = " + str(bwfcount[1]) + " (BWFleft = " + str(bwfcount[0]) + ")")
+                rresult = sensors.escapehitrightcoil()
+                mbdebug = rresult
+                robotstate = "recovering"
+                bwfcount = sensors.readcoils()
+
+            if (wheelload > 400):
+                a = int(random() + 0.5)
+                if (a == 0):
+                  sensorcheck = "escaperight"
+                  mbdebug = "overload escaperight"
+                  rresult = sensors.escapehitleftcoil()
+                  mbdebug = rresult
+                else:
+                  sensorcheck = "escapeleft"
+                  mbdebug = "overload escapeleft"
+                  rresult = sensors.escapehitrightcoil()
+                  mbdebug = rresult
+                syslog.syslog("Liam-on-RPi: wheel load " + str(wheelload) + ", random a = " + str(a))
+                robotstate = "recovering"
+                wheelload = sensors.readmotorcurrent()
+                wheelload = sensors.readmotorcurrent()
+                wheelload = sensors.readmotorcurrent()
+
+            if (sensorcheck == "allok" and robotstate != "running"):
+                robot.forward(255)
+                robotstate = "running"
+
+        # Rendering some text
+        timetick = time.time() - curtime
+        if (timetick >= 1):
+          #stdscr.clear()
+          #stdscr.erase()
+          whstr = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time())) + " " + str(lapcounter) + " laps                 "
+          curtime = time.time()
+          lapcounter = 0
+          stdscr.addstr(0, 0, whstr + "                       ", curses.color_pair(1))
+          stdscr.addstr(1, 0, str(voltage) + " volts                  ", curses.color_pair(1))
+          stdscr.addstr(2, 0, str(bwfcount[0]) + " " + str(bwfcount[1]) + " hits                  ", curses.color_pair(1))
+          stdscr.addstr(3, 0, str(wheelload) + " wheel load                  ", curses.color_pair(1))
+          stdscr.addstr(4, 0, str(cutterload) + " cutter load                  ", curses.color_pair(1))
+          stdscr.addstr(5, 0, mbdebug + "                       ", curses.color_pair(1))
+          stdscr.refresh()
+
+
+        # Render status bar
+        stdscr.attron(curses.color_pair(3))
+        stdscr.addstr(height-1, 0, statusbarstr)
+        stdscr.addstr(height-1, len(statusbarstr), " " * (width - len(statusbarstr) - 1))
+        stdscr.attroff(curses.color_pair(3))
+
+        # Turning on attributes for title
+        stdscr.attron(curses.color_pair(2))
+        stdscr.attron(curses.A_BOLD)
+
+        # Turning off attributes for title
+        stdscr.attroff(curses.color_pair(2))
+        stdscr.attroff(curses.A_BOLD)
+
+        # Wait for next input
+        prevk = k
+        k = stdscr.getch()
+        lapcounter += 1
+        if (k != prevk): syslog.syslog("Liam-on-RPi: k change from " + str(prevk) + " to " + str(k))
+
+def main():
+    curses.wrapper(draw_menu)
+
+if __name__ == "__main__":
+    main()
+

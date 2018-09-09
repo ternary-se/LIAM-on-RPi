@@ -1,0 +1,2 @@
+#!/bin/bash
+screen -dmS Mowerhack /home/martin/bin//mower
