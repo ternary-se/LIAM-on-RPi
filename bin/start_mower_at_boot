@@ -1,2 +1,2 @@
 #!/bin/bash
-screen -dmS Mowerhack /home/martin/bin//mower
+screen -dmS Mowerhack /home/martin/LIAM-on-RPi/bin/mower

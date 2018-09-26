@@ -16,6 +16,9 @@ import syslog
 
 import mowersensors
 
+LedPin = 18    # pin18
+GPIO.setup(LedPin, GPIO.OUT)   # Set LedPin's mode is output
+GPIO.setup(27, GPIO.IN, pull_up_down = GPIO.PUD_UP)   # pushbutton
 
 
 def draw_menu(stdscr):
@@ -23,10 +26,20 @@ def draw_menu(stdscr):
     mbdebug = "debug"
     LEFT_TRIM   = -8
     RIGHT_TRIM  = 0
+    ledblinktoggler = False
+    global robot
     robot = mowerfunctions.Robot(left_trim=LEFT_TRIM, right_trim=RIGHT_TRIM)
 
     sensors = mowersensors.Sensorread()
 
+    def amtoggle(channel):
+      syslog.syslog("Liam-on-RPi: LED button pressed")
+      global butt
+      global robotstate
+      if (butt == 0): butt = ord('a')
+      if (butt == -1): butt = ord('m')
+
+    GPIO.add_event_detect(27, GPIO.RISING, callback=amtoggle, bouncetime=300)
 
     ##
 
@@ -34,6 +47,8 @@ def draw_menu(stdscr):
     prevk = 0
     cursor_x = 0
     cursor_y = 0
+    global butt
+    butt = 0
 
     # Clear and refresh the screen for a blank canvas
     stdscr.clear()
@@ -85,9 +100,9 @@ def draw_menu(stdscr):
             keystr = "No key press detected..."[:width-1]
 
         if (k == ord('m')):
-            rresult = sensors.escapehitrightcoil()
+            robot.stop()
+            robot.cutterstop()
             k = 0
-            mbdebug = rresult
             robotstate = "pause"
 
         if (k == ord('a')) or (robotstate == "recovering") or (robotstate == "running"):
@@ -110,7 +125,7 @@ def draw_menu(stdscr):
                 robotstate = "recovering"
                 bwfcount = sensors.readcoils()
 
-            if (wheelload > 400):
+            if (wheelload > 650):
                 a = int(random() + 0.5)
                 if (a == 0):
                   sensorcheck = "escaperight"
@@ -129,8 +144,10 @@ def draw_menu(stdscr):
                 wheelload = sensors.readmotorcurrent()
 
             if (sensorcheck == "allok" and robotstate != "running"):
+                robot.cutterforward(255)
                 robot.forward(255)
                 robotstate = "running"
+                GPIO.output(LedPin, GPIO.HIGH) # led on
 
         # Rendering some text
         timetick = time.time() - curtime
@@ -142,11 +159,18 @@ def draw_menu(stdscr):
           lapcounter = 0
           stdscr.addstr(0, 0, whstr + "                       ", curses.color_pair(1))
           stdscr.addstr(1, 0, str(voltage) + " volts                  ", curses.color_pair(1))
-          stdscr.addstr(2, 0, str(bwfcount[0]) + " " + str(bwfcount[1]) + " hits                  ", curses.color_pair(1))
+          stdscr.addstr(2, 0, str(bwfcount[0]) + " " + str(bwfcount[1]) + " " + str(bwfcount[2]) + " hits                  ", curses.color_pair(1))
           stdscr.addstr(3, 0, str(wheelload) + " wheel load                  ", curses.color_pair(1))
           stdscr.addstr(4, 0, str(cutterload) + " cutter load                  ", curses.color_pair(1))
           stdscr.addstr(5, 0, mbdebug + "                       ", curses.color_pair(1))
           stdscr.refresh()
+          if (robotstate != "running"):
+              if ledblinktoggler:
+                  GPIO.output(LedPin, GPIO.LOW) # led off
+                  ledblinktoggler = False
+              else:
+                  GPIO.output(LedPin, GPIO.HIGH) # led on
+                  ledblinktoggler = True
 
 
         # Render status bar
@@ -166,6 +190,12 @@ def draw_menu(stdscr):
         # Wait for next input
         prevk = k
         k = stdscr.getch()
+        if (butt == ord('a')):
+            k = butt
+            butt = -1
+        if (butt == ord('m')):
+            k = butt
+            butt = 0
         lapcounter += 1
         if (k != prevk): syslog.syslog("Liam-on-RPi: k change from " + str(prevk) + " to " + str(k))
 

@@ -1,0 +1,64 @@
+#!/usr/bin/python
+
+import RPi.GPIO as GPIO
+from time import sleep
+#import _mysql
+import time
+
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(22, GPIO.IN, pull_up_down = GPIO.PUD_UP)
+GPIO.setup(23, GPIO.IN, pull_up_down = GPIO.PUD_UP)
+GPIO.setup(24, GPIO.IN, pull_up_down = GPIO.PUD_UP)
+GPIO.setup(25, GPIO.IN, pull_up_down = GPIO.PUD_UP)
+knappcount = 0
+knappcount2 = 0
+knappcount3 = 0
+knappcount4 = 0
+#connect mysql
+#con = _mysql.connect('192.168.3.9', 'root', '', 'gpio')
+#initialise a previous input variable to 0 (assume button not pressed last)
+#mb prev_input = 0
+prev_input = 1
+start_time = time.time()
+prev_input2 = 1
+start_time2 = time.time()
+prev_input3 = 1
+start_time3 = time.time()
+prev_input4 = 1
+start_time4 = time.time()
+while True:
+  #take a reading
+  input = GPIO.input(24)
+  input2 = GPIO.input(25)
+  input3 = GPIO.input(22)
+  input4 = GPIO.input(23)
+#  if ((not input) and prev_input):
+#    print ("DOWN!")
+  #if the last reading was low and this one high, print
+  if ((not prev_input) and input):
+    knappcount += 1
+  if ((not prev_input2) and input2):
+    knappcount2 += 1
+  if ((not prev_input3) and input3):
+    knappcount3 += 1
+  if ((not prev_input4) and input4):
+    knappcount4 += 1
+#    print("Button release " + str(knappcount) + " " + str(elapsed_time))
+  #update previous input
+  prev_input = input
+  prev_input2 = input2
+  prev_input3 = input3
+  prev_input4 = input4
+  #slight pause to debounce
+  #sleep(0.02)
+  elapsed_time = time.time() - start_time
+  if (elapsed_time >= .10):
+    print("times up, " + str(knappcount) + " hits")
+    print("times up2, " + str(knappcount2) + " hits")
+    print("times up3, " + str(knappcount3) + " hits")
+    print("times up4, " + str(knappcount4) + " hits")
+    start_time = time.time()
+    knappcount = 0
+    knappcount2 = 0
+    knappcount3 = 0
+    knappcount4 = 0
