@@ -2,6 +2,7 @@ import sys,os
 import curses
 import time
 import datetime
+import configparser
 
 import RPi.GPIO as GPIO
 import atexit
@@ -35,7 +36,7 @@ rplacement = "inside"
 lplacement = "inside"
 
 ### used variables ###
-voltage_readings = deque([0, 0, 0, 0, 0])
+voltage_readings = deque([0, 0, 0, 0, 0, 0, 0, 0])
 wheelload_readings = deque([0, 0, 0,])
 cutterload_readings = deque([0, 0, 0, 0, 0])
 
@@ -47,6 +48,27 @@ class Sensorread(object):
     global wheelload_readings
     global cutterload_readings
     global robot
+
+    ## read config
+    config = configparser.ConfigParser()
+    config.read("../mower.conf")
+
+    global forwardspeed
+    global lowbackwardspeed
+    global mediumbackwardspeed
+    global highbackwardspeed
+    global cutterdiscspeed 
+    global obstacletrigger 
+    global cutterdisctrigger 
+
+    forwardspeed = int(config['mower']['forwardspeed'])
+    lowbackwardspeed = int(config['mower']['lowbackwardspeed'])
+    mediumbackwardspeed = int(config['mower']['mediumbackwardspeed'])
+    highbackwardspeed = int(config['mower']['highbackwardspeed'])
+    cutterdiscspeed = int(config['mower']['cutterdiscspeed'])
+    obstacletrigger = int(config['mower']['obstacletrigger'])
+    cutterdisctrigger = int(config['mower']['cutterdisctrigger'])
+
     
     def readvoltage(self):
         a0 = mcp.read_adc(0)
@@ -54,7 +76,8 @@ class Sensorread(object):
         voltage_readings.rotate(1)
         voltage_readings[0] = a0
         a0_median = median(voltage_readings)
-        voltage = (float(a0_median) * 3.2680645161290322580645161290323 * 4.0228013029315960912052117263844) / 1023
+        #voltage = (float(a0_median) * 3.2680645161290322580645161290323 * 4.0228013029315960912052117263844) / 1023
+        voltage = (float(a0_median) * 5 * 4.0303030303030303) / 1023
         return voltage
 
     def readcoils(self):
@@ -114,7 +137,9 @@ class Sensorread(object):
 
         #that was dumb robot.backward(255, 1.5)
         #that was dumb robot.stop()
-        robot.backward(255)
+        robot.backward(lowbackwardspeed, 0.2)
+        robot.backward(mediumbackwardspeed, 0.2)
+        robot.backward(highbackwardspeed)
         fromtime = time.time()
         a = 0
         # loop acts like sleep but does sensor reading while turning
@@ -126,7 +151,7 @@ class Sensorread(object):
               wheelload = self.readmotorcurrent()
           coil = self.readcoils()
           # if rear coil passes BWF, times up or we hit something
-          if ( 17 <= coil[2] <= 27) or (timediff >= turntime) or (wheelload > 600):
+          if ( 17 <= coil[2] <= 27) or (timediff >= turntime) or (wheelload > obstacletrigger):
             robot.stop()
             #time.sleep(0.85)
             a = 1
@@ -139,7 +164,7 @@ class Sensorread(object):
         time.sleep(0.85)
         turntime = random() * 1.35
         #syslog.syslog("Liam-on-RPi: escapehitrightcoil turntime = " + str(turntime))
-        robot.left(255)
+        robot.left(forwardspeed)
         fromtime = time.time()
         a = 0
         # loop acts like sleep but does sensor reading while turning
@@ -150,7 +175,7 @@ class Sensorread(object):
               wheelload = self.readmotorcurrent()
           coil = self.readcoils()
           # if left coil passes BWF, times up or we hit something
-          if ( 17 <= coil[0] <= 27) or (timediff >= turntime) or (wheelload > 600):
+          if ( 17 <= coil[0] <= 27) or (timediff >= turntime) or (wheelload > obstacletrigger):
             robot.stop()
             time.sleep(0.85)
             a = 1
@@ -175,7 +200,9 @@ class Sensorread(object):
         #assumes the coast is clear backwards
         #that was dumb robot.backward(255, 1.5)
         #robot.stop()
-        robot.backward(255)
+        robot.backward(lowbackwardspeed, 0.2)
+        robot.backward(mediumbackwardspeed, 0.2)
+        robot.backward(highbackwardspeed)
         fromtime = time.time()
         a = 0
         # loop acts like sleep but does sensor reading while turning
@@ -187,7 +214,7 @@ class Sensorread(object):
               wheelload = self.readmotorcurrent()
           coil = self.readcoils()
           # if rear coil passes BWF, times up or we hit something
-          if ( 17 <= coil[2] <= 27) or (timediff >= turntime) or (wheelload > 600):
+          if ( 17 <= coil[2] <= 27) or (timediff >= turntime) or (wheelload > obstacletrigger):
             robot.stop()
             #time.sleep(0.85)
             a = 1
@@ -199,7 +226,7 @@ class Sensorread(object):
 
         time.sleep(0.85)
         turntime = random() * 1.35
-        robot.right(255)
+        robot.right(forwardspeed)
         fromtime = time.time()
         a = 0
         # loop acts like sleep but does sensor reading while turning
@@ -210,7 +237,7 @@ class Sensorread(object):
               wheelload = self.readmotorcurrent()
           coil = self.readcoils()
           # if right coil passes BWF, times up or we hit something
-          if ( 17 <= coil[1] <= 27) or (timediff >= turntime) or (wheelload > 600):
+          if ( 17 <= coil[1] <= 27) or (timediff >= turntime) or (wheelload > obstacletrigger):
             robot.stop()
             time.sleep(0.85)
             a = 1
@@ -219,4 +246,65 @@ class Sensorread(object):
             else:
               returncode = "fail"
             syslog.syslog("Liam-on-RPi: escapehitleftcoil obstacle, rightcoil = " + str(coil[1]) + ", timediff = " + str(timediff) + "/" + str(turntime) + ", wheel = " + str(wheelload) + " returned " + returncode)
+            return returncode
+
+    def escapelinefollow(self):
+        syslog.syslog("Liam-on-RPi: entering escapelinefollow")
+        robot.stop()
+        time.sleep(1.85)
+        # read a low value for initialising variable
+        wheelload = self.readmotorcurrent()
+        wheelload = self.readmotorcurrent()
+        wheelload = self.readmotorcurrent()
+        wheelload = self.readmotorcurrent()
+        robot.backward(lowbackwardspeed, 0.2)
+        robot.backward(mediumbackwardspeed, 0.2)
+        robot.backward(highbackwardspeed)
+        fromtime = time.time()
+        a = 0
+        # loop acts like sleep but does sensor reading while turning
+        turntime = 0.75
+        while (a == 0):
+          timediff = time.time() - fromtime
+          # wait a little while before reading motor current to stabilise it
+          if (timediff > 0.2):
+              wheelload = self.readmotorcurrent()
+          coil = self.readcoils()
+          # nope: if rear coil passes BWF, times up or we hit something
+          #if ( 17 <= coil[2] <= 27) or (timediff >= turntime) or (wheelload > obstacletrigger):
+          # yep: if times up or we hit something
+          if (timediff >= turntime) or (wheelload > obstacletrigger):
+            robot.stop()
+            #time.sleep(0.85)
+            a = 1
+            if (timediff >= turntime):
+              returncode = "reverse ok"
+            else:
+              returncode = "reverse fail"
+            syslog.syslog("Liam-on-RPi: escapelinefollow reverse, rearcoil = " + str(coil[2]) + ", timediff = " + str(timediff) + "/" + str(turntime) + ", wheel = " + str(wheelload) + " returned " + returncode)
+
+        time.sleep(0.85)
+        #turntime = random() * 1.35
+        # Should be somewhere between 45 and 90 degrees
+        turntime = 0.22
+        robot.right(forwardspeed)
+        fromtime = time.time()
+        a = 0
+        # loop acts like sleep but does sensor reading while turning
+        while (a == 0):
+          timediff = time.time() - fromtime
+          # wait a little while before reading motor current to stabilise it
+          if (timediff > 0.2):
+              wheelload = self.readmotorcurrent()
+          coil = self.readcoils()
+          # if right coil passes BWF, times up or we hit something
+          if ( 17 <= coil[1] <= 27) or (timediff >= turntime) or (wheelload > obstacletrigger):
+            robot.stop()
+            time.sleep(0.85)
+            a = 1
+            if (timediff >= turntime):
+              returncode = "ok"
+            else:
+              returncode = "fail"
+            syslog.syslog("Liam-on-RPi: escapelinefollow obstacle, rightcoil = " + str(coil[1]) + ", timediff = " + str(timediff) + "/" + str(turntime) + ", wheel = " + str(wheelload) + " returned " + returncode)
             return returncode

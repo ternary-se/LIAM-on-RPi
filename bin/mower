@@ -3,6 +3,10 @@ import sys,os
 import curses
 import time
 import datetime
+import configparser
+import requests
+import json
+
 
 import RPi.GPIO as GPIO
 import atexit
@@ -19,6 +23,8 @@ import mowersensors
 LedPin = 18    # pin18
 GPIO.setup(LedPin, GPIO.OUT)   # Set LedPin's mode is output
 GPIO.setup(27, GPIO.IN, pull_up_down = GPIO.PUD_UP)   # pushbutton
+
+GPIO.setup(17, GPIO.IN, pull_up_down = GPIO.PUD_UP)   # 12 volt charger detection
 
 
 def draw_menu(stdscr):
@@ -50,6 +56,31 @@ def draw_menu(stdscr):
     global butt
     butt = 0
 
+    ## read config
+    config = configparser.ConfigParser()
+    config.read("../mower.conf")
+
+    global forwardspeed
+    global lowbackwardspeed
+    global mediumbackwardspeed
+    global highbackwardspeed
+    global cutterdiscspeed
+    global obstacletrigger
+    global obstacletriggerbwffollow
+    global cutterdisctrigger
+
+
+    forwardspeed = int(config['mower']['forwardspeed'])
+    lowbackwardspeed = int(config['mower']['lowbackwardspeed'])
+    mediumbackwardspeed = int(config['mower']['mediumbackwardspeed'])
+    highbackwardspeed = int(config['mower']['highbackwardspeed'])
+    cutterdiscspeed = int(config['mower']['cutterdiscspeed'])
+    obstacletrigger = int(config['mower']['obstacletrigger'])
+    obstacletriggerbwffollow = int(config['mower']['obstacletriggerbwffollow'])
+    cutterdisctrigger = int(config['mower']['cutterdisctrigger'])
+
+
+
     # Clear and refresh the screen for a blank canvas
     stdscr.clear()
     stdscr.refresh()
@@ -63,15 +94,47 @@ def draw_menu(stdscr):
     curses.init_pair(3, curses.COLOR_BLACK, curses.COLOR_WHITE)
 
     curtime = time.time()
+    polltimer = time.time()
     whstr = "dummy"
     lapcounter = 0
     robotstate = "pause"
+    prevjsonaction = "dummy"
 
     stdscr.nodelay(True)
     syslog.syslog("Liam-on-RPi: entering loop")
 
     # Loop where k is the last character pressed
     while (k != ord('q')):
+
+        # Poll server for desired action then and then as we say in swedish
+        if (time.time() - polltimer > 60):
+            syslog.syslog("Liam-on-RPi: polltimer reached " + str(time.time() - polltimer))
+            r = requests.get('http://192.168.4.37/mower/?u=action')
+            daataa = json.loads(r.text)
+            jsonaction = daataa["action"][0]
+            syslog.syslog("Liam-on-RPi: action from JSON: " + jsonaction)
+            if (prevjsonaction != jsonaction):
+               if (jsonaction == "auto"): butt = ord('a')
+               if (jsonaction == "halt"): butt = ord('m')
+               if (jsonaction == "sleep"): butt = ord('c')
+               prevjsonaction = jsonaction
+            polltimer = time.time()
+
+            chargerconnected = GPIO.input(17)
+            if (chargerconnected == 0) and (jsonaction == "auto"):
+              syslog.syslog("Liam-on-RPi: charger pin is 0 and we are charging")
+              if (voltage >= 14.2):
+                syslog.syslog("Liam-on-RPi: charging done, lousy calculated voltage is " + str(voltage))
+                robot.backward(135, 5.5)
+                robot.stop()
+                time.sleep(0.3)
+                robot.right(135, 1.6)
+                robot.forward(135, 3.5)
+                butt = ord('a')
+
+              syslog.syslog("Liam-on-RPi: lousy calculated voltage is " + str(voltage))
+
+
 
         # A short sleep to lower CPU load and hopefully save some power
         time.sleep(.1)
@@ -125,7 +188,7 @@ def draw_menu(stdscr):
                 robotstate = "recovering"
                 bwfcount = sensors.readcoils()
 
-            if (wheelload > 650):
+            if (wheelload > obstacletrigger):
                 a = int(random() + 0.5)
                 if (a == 0):
                   sensorcheck = "escaperight"
@@ -144,10 +207,114 @@ def draw_menu(stdscr):
                 wheelload = sensors.readmotorcurrent()
 
             if (sensorcheck == "allok" and robotstate != "running"):
-                robot.cutterforward(255)
-                robot.forward(255)
+                robot.cutterforward(cutterdiscspeed)
+                robot.forward(forwardspeed)
                 robotstate = "running"
                 GPIO.output(LedPin, GPIO.HIGH) # led on
+
+        if (k == ord('c')) or (robotstate == "bwfrecovering") or (robotstate == "bwfsearching"):
+            syslog.syslog("Liam-on-RPi: entering BWF find top")
+            robot.cutterstop()
+            sensorcheck = "allok"
+            #if (robotstate != "bwfrecovering"): robotstate = "bwfsearching"
+            if (bwfcount[0] > 15) and (bwfcount[1] > 15):
+                syslog.syslog("Liam-on-RPi: " + sensorcheck + " (BWF finder) BWFleft = " + str(bwfcount[0]) + " (BWFright = " + str(bwfcount[1]) + ")")
+                robotstate = "linefollow"
+                inneraction = "placecoilsbetweenbwf"
+                bwfcount = sensors.readcoils()
+                robot.stop()
+                time.sleep(0.3)
+                k = 0
+                syslog.syslog("Liam-on-RPi: " +  "(BWF finder) stopping")
+
+            if (wheelload > obstacletrigger):
+                syslog.syslog("Liam-on-RPi: entering BWF find wheelload " + str(wheelload))
+                a = int(random() + 0.5)
+                if (a == 0):
+                  sensorcheck = "escaperight"
+                  mbdebug = "overload escaperight"
+                  rresult = sensors.escapehitleftcoil()
+                  mbdebug = rresult
+                else:
+                  sensorcheck = "escapeleft"
+                  mbdebug = "overload escapeleft"
+                  rresult = sensors.escapehitrightcoil()
+                  mbdebug = rresult
+                syslog.syslog("Liam-on-RPi: wheel load " + str(wheelload) + ", random a = " + str(a))
+                robotstate = "bwfrecovering"
+                wheelload = sensors.readmotorcurrent()
+                wheelload = sensors.readmotorcurrent()
+                wheelload = sensors.readmotorcurrent()
+
+            if (sensorcheck == "allok" and robotstate != "bwfsearching" and robotstate != "linefollow"):
+                robot.forward(forwardspeed)
+                robotstate = "bwfsearching"
+                GPIO.output(LedPin, GPIO.HIGH) # led on
+                syslog.syslog("Liam-on-RPi: entering BWF find: running forward")
+
+        if (robotstate == "linefollow"):
+            innercoil = bwfcount[1]
+            outercoil = bwfcount[0]
+            chargerconnected = GPIO.input(17)
+            if (chargerconnected == 0):
+              syslog.syslog("Liam-on-RPi: charger pin is 0")
+              robot.stop()
+              k = 0
+              robotstate = "pause"
+              inneraction = "charge"
+            if (inneraction == "placecoilsbetweenbwf"): syslog.syslog("Liam-on-RPi: entering linefollow")
+            sensorcheck = "allok"
+            if (inneraction == "placecoilsbetweenbwf"): robot.right(100)
+            if (7 < innercoil < 15) and (outercoil > 15) and (inneraction == "placecoilsbetweenbwf"):
+                robot.stop()
+                time.sleep(0.3)
+                #k = 0
+                #robotstate = "pause"
+                inneraction = "runalongbwf"
+                syslog.syslog("Liam-on-RPi: coils between BWF, inner = " + str(innercoil) + " outer = " + str(outercoil))
+
+
+            if (inneraction == "runalongbwf"):
+                robot.forward(155)
+                if (7 < outercoil < 15):
+                  robot.stop()
+                  inneraction = "adjustleft"
+                  syslog.syslog("Liam-on-RPi: OUTER coil inside bwf")
+
+                if (innercoil > 15):
+                  robot.stop()
+                  inneraction = "adjustright"
+                  syslog.syslog("Liam-on-RPi: inner coil OUTSIDE bwf")
+
+            if (inneraction == "adjustleft"):
+                  syslog.syslog("Liam-on-RPi: entering adjustleft")
+                  robot.left(100)
+                  if (7 < innercoil < 15) and (outercoil > 15):
+                    robot.stop()
+                    time.sleep(0.3)
+                    inneraction = "runalongbwf"
+                    syslog.syslog("Liam-on-RPi: LMartin cant code, coils between BWF, inner = " + str(innercoil) + " outer = " + str(outercoil))
+
+            if (inneraction == "adjustright"):
+                  syslog.syslog("Liam-on-RPi: entering adjustright")
+                  robot.right(100)
+                  if (7 < innercoil < 15) and (outercoil > 15):
+                    robot.stop()
+                    time.sleep(0.3)
+                    inneraction = "runalongbwf"
+                    syslog.syslog("Liam-on-RPi: RMartin cant code, coils between BWF, inner = " + str(innercoil) + " outer = " + str(outercoil))
+
+            wheelload = sensors.readmotorcurrent()
+            if (wheelload > obstacletriggerbwffollow) and (robotstate != "pause"):
+                syslog.syslog("Liam-on-RPi: Linefollow wheel load " + str(wheelload) + ", random a = ")
+                sensorcheck = "escapelinefollow"
+                mbdebug = "overload escapelinefollow"
+                rresult = sensors.escapelinefollow()
+                mbdebug = rresult
+                robotstate = "bwfrecovering"
+                wheelload = sensors.readmotorcurrent()
+                wheelload = sensors.readmotorcurrent()
+                wheelload = sensors.readmotorcurrent()
 
         # Rendering some text
         timetick = time.time() - curtime
@@ -172,6 +339,8 @@ def draw_menu(stdscr):
                   GPIO.output(LedPin, GPIO.HIGH) # led on
                   ledblinktoggler = True
 
+          if (robotstate == "running"):
+            if (voltage < 13.0): butt = ord('c')
 
         # Render status bar
         stdscr.attron(curses.color_pair(3))
@@ -194,6 +363,9 @@ def draw_menu(stdscr):
             k = butt
             butt = -1
         if (butt == ord('m')):
+            k = butt
+            butt = 0
+        if (butt == ord('c')):
             k = butt
             butt = 0
         lapcounter += 1
